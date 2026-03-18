@@ -3,8 +3,8 @@ import mongoose from "mongoose";
 import multer from "multer";
 import cors from "cors";
 import fs from "fs";
-import Replicate from "replicate";
 import dotenv from "dotenv";
+import Replicate from "replicate";
 import { v2 as cloudinary } from "cloudinary";
 
 dotenv.config();
@@ -16,8 +16,8 @@ app.use(express.json());
 
 // ===== ENV =====
 const PORT = process.env.PORT || 10000;
-const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN;
 const MONGO_URI = process.env.MONGO_URI;
+const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN;
 
 // ===== CLOUDINARY CONFIG =====
 cloudinary.config({
@@ -36,7 +36,7 @@ mongoose.connect(MONGO_URI)
   .then(() => console.log("MongoDB Connected ✅"))
   .catch((err) => console.log("MongoDB Error ❌", err));
 
-// ===== MULTER (TEMP STORAGE) =====
+// ===== MULTER =====
 const upload = multer({ dest: "uploads/" });
 
 // ===== SCHEMA =====
@@ -50,18 +50,22 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model("User", userSchema);
 
-// ===== ROOT =====
+// ===== ROOT (DEPLOY CHECK) =====
 app.get("/", (req, res) => {
-  res.send("Server running 🚀");
+  res.send("TRYON VERSION LIVE ✅");
 });
 
 
 // =====================================================
-// 🚀 DIRECT TRY-ON TEST (FAST DEBUG)
+// 🔥 TRY-ON TEST ENDPOINT
 // =====================================================
 app.post("/tryon", async (req, res) => {
   try {
     const { person_image, cloth_image } = req.body;
+
+    if (!person_image || !cloth_image) {
+      return res.status(400).json({ error: "Images required" });
+    }
 
     const output = await replicate.run(
       "lucataco/idm-vton",
@@ -79,38 +83,35 @@ app.post("/tryon", async (req, res) => {
     });
 
   } catch (err) {
-    console.error(err);
+    console.error("TRYON ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
 
 // =====================================================
-// USER FLOW (WITH CLOUDINARY)
+// USER FLOW
 // =====================================================
 
-// CREATE USER (BODY IMAGE)
+// CREATE USER
 app.post("/create-user", upload.single("bodyImage"), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: "Body image required" });
     }
 
-    // Upload to Cloudinary
-    const result = await cloudinary.uploader.upload(req.file.path);
-
-    // Delete local file
+    const uploadRes = await cloudinary.uploader.upload(req.file.path);
     fs.unlinkSync(req.file.path);
 
-    const newUser = new User({
-      bodyImage: result.secure_url
+    const user = new User({
+      bodyImage: uploadRes.secure_url
     });
 
-    await newUser.save();
+    await user.save();
 
     res.json({
       message: "User created ✅",
-      userId: newUser._id
+      userId: user._id
     });
 
   } catch (err) {
@@ -125,10 +126,10 @@ app.post("/add-upper/:userId", upload.single("upperImage"), async (req, res) => 
     const user = await User.findById(req.params.userId);
     if (!user) return res.status(404).json({ error: "User not found" });
 
-    const result = await cloudinary.uploader.upload(req.file.path);
+    const uploadRes = await cloudinary.uploader.upload(req.file.path);
     fs.unlinkSync(req.file.path);
 
-    user.upperImage = result.secure_url;
+    user.upperImage = uploadRes.secure_url;
     await user.save();
 
     res.json({ message: "Upper added ✅" });
@@ -139,16 +140,16 @@ app.post("/add-upper/:userId", upload.single("upperImage"), async (req, res) => 
 });
 
 
-// ADD LOWER (optional for future)
+// ADD LOWER (optional)
 app.post("/add-lower/:userId", upload.single("lowerImage"), async (req, res) => {
   try {
     const user = await User.findById(req.params.userId);
     if (!user) return res.status(404).json({ error: "User not found" });
 
-    const result = await cloudinary.uploader.upload(req.file.path);
+    const uploadRes = await cloudinary.uploader.upload(req.file.path);
     fs.unlinkSync(req.file.path);
 
-    user.lowerImage = result.secure_url;
+    user.lowerImage = uploadRes.secure_url;
     await user.save();
 
     res.json({ message: "Lower added ✅" });
@@ -160,7 +161,7 @@ app.post("/add-lower/:userId", upload.single("lowerImage"), async (req, res) => 
 
 
 // =====================================================
-// 🔥 GENERATE OUTFIT (WORKING)
+// 🔥 GENERATE OUTFIT
 // =====================================================
 app.post("/generate-outfit/:userId", async (req, res) => {
   try {
@@ -191,7 +192,7 @@ app.post("/generate-outfit/:userId", async (req, res) => {
     });
 
   } catch (err) {
-    console.error(err);
+    console.error("GENERATE ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -202,7 +203,7 @@ app.get("/result/:userId", async (req, res) => {
   const user = await User.findById(req.params.userId);
 
   if (!user || !user.finalImage) {
-    return res.status(404).json({ error: "No result" });
+    return res.status(404).json({ error: "No result found" });
   }
 
   res.json({
@@ -211,7 +212,7 @@ app.get("/result/:userId", async (req, res) => {
 });
 
 
-// ===== START SERVER =====
+// ===== START =====
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT} 🚀`);
 });
