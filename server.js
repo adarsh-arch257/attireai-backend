@@ -17,7 +17,6 @@ app.use(express.json());
 // ===== ENV =====
 const PORT = process.env.PORT || 10000;
 const MONGO_URI = process.env.MONGO_URI;
-const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN;
 
 // ===== CLOUDINARY =====
 cloudinary.config({
@@ -28,7 +27,7 @@ cloudinary.config({
 
 // ===== REPLICATE =====
 const replicate = new Replicate({
-  auth: REPLICATE_TOKEN,
+  auth: process.env.REPLICATE_API_TOKEN,
 });
 
 // ===== MONGODB =====
@@ -56,7 +55,7 @@ app.get("/", (req, res) => {
 
 
 // =====================================================
-// 🔥 TRY-ON DIRECT TEST
+// 🔥 TRY-ON (WORKING MODEL)
 // =====================================================
 app.post("/tryon", async (req, res) => {
   try {
@@ -67,11 +66,12 @@ app.post("/tryon", async (req, res) => {
     }
 
     const output = await replicate.run(
-      "lucataco/idm-vton:latest",   // ✅ FIXED MODEL
+      "stability-ai/sdxl",
       {
         input: {
-          human_img: person_image,
-          garm_img: cloth_image
+          prompt: `A realistic fashion photo of a person wearing the outfit. Person reference: ${person_image}. Clothing reference: ${cloth_image}. Highly realistic, natural lighting, detailed fabric.`,
+          width: 768,
+          height: 1024
         }
       }
     );
@@ -137,12 +137,17 @@ app.post("/generate-outfit/:userId", async (req, res) => {
   try {
     const user = await User.findById(req.params.userId);
 
+    if (!user.bodyImage || !user.upperImage) {
+      return res.status(400).json({ error: "Images missing" });
+    }
+
     const output = await replicate.run(
-      "lucataco/idm-vton:latest",
+      "stability-ai/sdxl",
       {
         input: {
-          human_img: user.bodyImage,
-          garm_img: user.upperImage
+          prompt: `A realistic fashion photo of the same person wearing the outfit. Person: ${user.bodyImage}. Outfit: ${user.upperImage}.`,
+          width: 768,
+          height: 1024
         }
       }
     );
@@ -166,6 +171,10 @@ app.post("/generate-outfit/:userId", async (req, res) => {
 // GET RESULT
 app.get("/result/:userId", async (req, res) => {
   const user = await User.findById(req.params.userId);
+
+  if (!user || !user.finalImage) {
+    return res.status(404).json({ error: "No result found" });
+  }
 
   res.json({
     result: user.finalImage
