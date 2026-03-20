@@ -19,7 +19,7 @@ const PORT = process.env.PORT || 10000;
 const MONGO_URI = process.env.MONGO_URI;
 const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN;
 
-// ===== CLOUDINARY CONFIG =====
+// ===== CLOUDINARY =====
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
@@ -43,21 +43,20 @@ const upload = multer({ dest: "uploads/" });
 const userSchema = new mongoose.Schema({
   bodyImage: String,
   upperImage: String,
-  lowerImage: String,
   finalImage: String,
   createdAt: { type: Date, default: Date.now }
 });
 
 const User = mongoose.model("User", userSchema);
 
-// ===== ROOT (DEPLOY CHECK) =====
+// ===== ROOT =====
 app.get("/", (req, res) => {
   res.send("TRYON VERSION LIVE ✅");
 });
 
 
 // =====================================================
-// 🔥 TRY-ON TEST ENDPOINT
+// 🔥 TRY-ON DIRECT TEST
 // =====================================================
 app.post("/tryon", async (req, res) => {
   try {
@@ -68,7 +67,7 @@ app.post("/tryon", async (req, res) => {
     }
 
     const output = await replicate.run(
-      "lucataco/idm-vton",
+      "lucataco/idm-vton:latest",   // ✅ FIXED MODEL
       {
         input: {
           human_img: person_image,
@@ -96,10 +95,6 @@ app.post("/tryon", async (req, res) => {
 // CREATE USER
 app.post("/create-user", upload.single("bodyImage"), async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: "Body image required" });
-    }
-
     const uploadRes = await cloudinary.uploader.upload(req.file.path);
     fs.unlinkSync(req.file.path);
 
@@ -119,12 +114,10 @@ app.post("/create-user", upload.single("bodyImage"), async (req, res) => {
   }
 });
 
-
 // ADD UPPER
 app.post("/add-upper/:userId", upload.single("upperImage"), async (req, res) => {
   try {
     const user = await User.findById(req.params.userId);
-    if (!user) return res.status(404).json({ error: "User not found" });
 
     const uploadRes = await cloudinary.uploader.upload(req.file.path);
     fs.unlinkSync(req.file.path);
@@ -139,40 +132,13 @@ app.post("/add-upper/:userId", upload.single("upperImage"), async (req, res) => 
   }
 });
 
-
-// ADD LOWER (optional)
-app.post("/add-lower/:userId", upload.single("lowerImage"), async (req, res) => {
-  try {
-    const user = await User.findById(req.params.userId);
-    if (!user) return res.status(404).json({ error: "User not found" });
-
-    const uploadRes = await cloudinary.uploader.upload(req.file.path);
-    fs.unlinkSync(req.file.path);
-
-    user.lowerImage = uploadRes.secure_url;
-    await user.save();
-
-    res.json({ message: "Lower added ✅" });
-
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-
-// =====================================================
-// 🔥 GENERATE OUTFIT
-// =====================================================
+// GENERATE OUTFIT
 app.post("/generate-outfit/:userId", async (req, res) => {
   try {
     const user = await User.findById(req.params.userId);
 
-    if (!user || !user.bodyImage || !user.upperImage) {
-      return res.status(400).json({ error: "Images missing" });
-    }
-
     const output = await replicate.run(
-      "lucataco/idm-vton",
+      "lucataco/idm-vton:latest",
       {
         input: {
           human_img: user.bodyImage,
@@ -197,20 +163,14 @@ app.post("/generate-outfit/:userId", async (req, res) => {
   }
 });
 
-
 // GET RESULT
 app.get("/result/:userId", async (req, res) => {
   const user = await User.findById(req.params.userId);
-
-  if (!user || !user.finalImage) {
-    return res.status(404).json({ error: "No result found" });
-  }
 
   res.json({
     result: user.finalImage
   });
 });
-
 
 // ===== START =====
 app.listen(PORT, () => {
