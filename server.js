@@ -9,10 +9,12 @@ import { v2 as cloudinary } from "cloudinary";
 
 dotenv.config();
 
+// ===== INIT =====
 const app = express();
 app.use(cors());
 app.use(express.json());
 
+// ===== ENV =====
 const PORT = process.env.PORT || 10000;
 
 // ===== CLOUDINARY =====
@@ -30,7 +32,7 @@ const replicate = new Replicate({
 // ===== MONGODB =====
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB Connected ✅"))
-  .catch(err => console.log("Mongo Error ❌", err));
+  .catch((err) => console.log("MongoDB Error ❌", err));
 
 // ===== MULTER =====
 const upload = multer({ dest: "uploads/" });
@@ -48,30 +50,35 @@ app.get("/", (req, res) => {
 });
 
 
-// ================= TRYON =================
+// =====================================================
+// 🔥 TRY-ON (FINAL WORKING MODEL)
+// =====================================================
 app.post("/tryon", async (req, res) => {
   try {
     const { person_image, cloth_image } = req.body;
 
+    if (!person_image || !cloth_image) {
+      return res.status(400).json({ error: "Images required" });
+    }
+
+    let output;
+
     const runModel = async () => {
       return await replicate.run(
-        "stability-ai/sdxl:8beff3369e814221d7d3a9c7d8c3f276d6d9c1c0e9bafc7b6a9e5d9e6c4b2f22",
+        "black-forest-labs/flux-schnell",
         {
           input: {
-            prompt: `A realistic fashion photo of a person wearing the outfit. Person: ${person_image}. Outfit: ${cloth_image}.`,
-            width: 768,
-            height: 1024
+            prompt: `A realistic fashion photo of a person wearing the outfit. Person: ${person_image}. Outfit: ${cloth_image}. Highly realistic, natural lighting.`
           }
         }
       );
     };
 
-    let output;
-
     try {
       output = await runModel();
     } catch (err) {
       if (err.message.includes("429")) {
+        console.log("Retrying after rate limit...");
         await new Promise(r => setTimeout(r, 7000));
         output = await runModel();
       } else {
@@ -79,9 +86,13 @@ app.post("/tryon", async (req, res) => {
       }
     }
 
-    res.json({ success: true, result: output });
+    res.json({
+      success: true,
+      result: output
+    });
 
   } catch (err) {
+    console.error("TRYON ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -89,55 +100,70 @@ app.post("/tryon", async (req, res) => {
 
 // ===== CREATE USER =====
 app.post("/create-user", upload.single("bodyImage"), async (req, res) => {
-  const uploadRes = await cloudinary.uploader.upload(req.file.path);
-  fs.unlinkSync(req.file.path);
+  try {
+    const uploadRes = await cloudinary.uploader.upload(req.file.path);
+    fs.unlinkSync(req.file.path);
 
-  const user = await User.create({ bodyImage: uploadRes.secure_url });
+    const user = await User.create({
+      bodyImage: uploadRes.secure_url
+    });
 
-  res.json({ userId: user._id });
+    res.json({ userId: user._id });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ===== ADD UPPER =====
 app.post("/add-upper/:id", upload.single("upperImage"), async (req, res) => {
-  const user = await User.findById(req.params.id);
+  try {
+    const user = await User.findById(req.params.id);
 
-  const uploadRes = await cloudinary.uploader.upload(req.file.path);
-  fs.unlinkSync(req.file.path);
+    const uploadRes = await cloudinary.uploader.upload(req.file.path);
+    fs.unlinkSync(req.file.path);
 
-  user.upperImage = uploadRes.secure_url;
-  await user.save();
+    user.upperImage = uploadRes.secure_url;
+    await user.save();
 
-  res.json({ message: "Upper added" });
+    res.json({ message: "Upper added ✅" });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// ===== GENERATE =====
+// ===== GENERATE OUTFIT =====
 app.post("/generate-outfit/:id", async (req, res) => {
-  const user = await User.findById(req.params.id);
+  try {
+    const user = await User.findById(req.params.id);
 
-  const output = await replicate.run(
-    "stability-ai/sdxl:8beff3369e814221d7d3a9c7d8c3f276d6d9c1c0e9bafc7b6a9e5d9e6c4b2f22",
-    {
-      input: {
-        prompt: `A realistic fashion photo of a person wearing the outfit. Person: ${user.bodyImage}. Outfit: ${user.upperImage}.`,
-        width: 768,
-        height: 1024
+    let output = await replicate.run(
+      "black-forest-labs/flux-schnell",
+      {
+        input: {
+          prompt: `A realistic fashion photo of the same person wearing the outfit. Person: ${user.bodyImage}. Outfit: ${user.upperImage}.`
+        }
       }
-    }
-  );
+    );
 
-  user.finalImage = output[0];
-  await user.save();
+    user.finalImage = output[0];
+    await user.save();
 
-  res.json({ result: output[0] });
+    res.json({ result: output[0] });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// ===== RESULT =====
+// ===== GET RESULT =====
 app.get("/result/:id", async (req, res) => {
   const user = await User.findById(req.params.id);
   res.json({ result: user.finalImage });
 });
 
-// ===== START =====
+// ===== START SERVER =====
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT} 🚀`);
 });
