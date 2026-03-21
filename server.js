@@ -55,7 +55,7 @@ app.get("/", (req, res) => {
 
 
 // =====================================================
-// 🔥 TRY-ON (WORKING MODEL)
+// 🔥 TRY-ON (WITH AUTO RETRY)
 // =====================================================
 app.post("/tryon", async (req, res) => {
   try {
@@ -65,16 +65,30 @@ app.post("/tryon", async (req, res) => {
       return res.status(400).json({ error: "Images required" });
     }
 
-    const output = await replicate.run(
-      "stability-ai/sdxl",
-      {
+    let output;
+
+    const runModel = async () => {
+      return await replicate.run("stability-ai/sdxl", {
         input: {
-          prompt: `A realistic fashion photo of a person wearing the outfit. Person reference: ${person_image}. Clothing reference: ${cloth_image}. Highly realistic, natural lighting, detailed fabric.`,
+          prompt: `A realistic fashion photo of a person wearing the outfit. Person: ${person_image}. Outfit: ${cloth_image}. Highly realistic, natural lighting.`,
           width: 768,
           height: 1024
         }
+      });
+    };
+
+    try {
+      output = await runModel();
+    } catch (err) {
+      // Retry if rate limited
+      if (err.message.includes("429")) {
+        console.log("Rate limited... retrying in 7 seconds");
+        await new Promise(r => setTimeout(r, 7000));
+        output = await runModel();
+      } else {
+        throw err;
       }
-    );
+    }
 
     res.json({
       success: true,
@@ -141,16 +155,29 @@ app.post("/generate-outfit/:userId", async (req, res) => {
       return res.status(400).json({ error: "Images missing" });
     }
 
-    const output = await replicate.run(
-      "stability-ai/sdxl",
-      {
+    let output;
+
+    const runModel = async () => {
+      return await replicate.run("stability-ai/sdxl", {
         input: {
           prompt: `A realistic fashion photo of the same person wearing the outfit. Person: ${user.bodyImage}. Outfit: ${user.upperImage}.`,
           width: 768,
           height: 1024
         }
+      });
+    };
+
+    try {
+      output = await runModel();
+    } catch (err) {
+      if (err.message.includes("429")) {
+        console.log("Retrying after rate limit...");
+        await new Promise(r => setTimeout(r, 7000));
+        output = await runModel();
+      } else {
+        throw err;
       }
-    );
+    }
 
     const resultURL = output[0];
 
