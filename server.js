@@ -9,14 +9,11 @@ import { v2 as cloudinary } from "cloudinary";
 
 dotenv.config();
 
-// ===== INIT =====
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ===== ENV =====
 const PORT = process.env.PORT || 10000;
-const MONGO_URI = process.env.MONGO_URI;
 
 // ===== CLOUDINARY =====
 cloudinary.config({
@@ -31,22 +28,19 @@ const replicate = new Replicate({
 });
 
 // ===== MONGODB =====
-mongoose.connect(MONGO_URI)
+mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB Connected ✅"))
-  .catch((err) => console.log("MongoDB Error ❌", err));
+  .catch(err => console.log("Mongo Error ❌", err));
 
 // ===== MULTER =====
 const upload = multer({ dest: "uploads/" });
 
 // ===== SCHEMA =====
-const userSchema = new mongoose.Schema({
+const User = mongoose.model("User", new mongoose.Schema({
   bodyImage: String,
   upperImage: String,
-  finalImage: String,
-  createdAt: { type: Date, default: Date.now }
-});
-
-const User = mongoose.model("User", userSchema);
+  finalImage: String
+}));
 
 // ===== ROOT =====
 app.get("/", (req, res) => {
@@ -54,35 +48,30 @@ app.get("/", (req, res) => {
 });
 
 
-// =====================================================
-// 🔥 TRY-ON (WITH AUTO RETRY)
-// =====================================================
+// ================= TRYON =================
 app.post("/tryon", async (req, res) => {
   try {
     const { person_image, cloth_image } = req.body;
 
-    if (!person_image || !cloth_image) {
-      return res.status(400).json({ error: "Images required" });
-    }
+    const runModel = async () => {
+      return await replicate.run(
+        "stability-ai/sdxl:8beff3369e814221d7d3a9c7d8c3f276d6d9c1c0e9bafc7b6a9e5d9e6c4b2f22",
+        {
+          input: {
+            prompt: `A realistic fashion photo of a person wearing the outfit. Person: ${person_image}. Outfit: ${cloth_image}.`,
+            width: 768,
+            height: 1024
+          }
+        }
+      );
+    };
 
     let output;
-
-    const runModel = async () => {
-      return await replicate.run("stability-ai/sdxl", {
-        input: {
-          prompt: `A realistic fashion photo of a person wearing the outfit. Person: ${person_image}. Outfit: ${cloth_image}. Highly realistic, natural lighting.`,
-          width: 768,
-          height: 1024
-        }
-      });
-    };
 
     try {
       output = await runModel();
     } catch (err) {
-      // Retry if rate limited
       if (err.message.includes("429")) {
-        console.log("Rate limited... retrying in 7 seconds");
         await new Promise(r => setTimeout(r, 7000));
         output = await runModel();
       } else {
@@ -90,122 +79,62 @@ app.post("/tryon", async (req, res) => {
       }
     }
 
-    res.json({
-      success: true,
-      result: output
-    });
+    res.json({ success: true, result: output });
 
   } catch (err) {
-    console.error("TRYON ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
 
-// =====================================================
-// USER FLOW
-// =====================================================
-
-// CREATE USER
+// ===== CREATE USER =====
 app.post("/create-user", upload.single("bodyImage"), async (req, res) => {
-  try {
-    const uploadRes = await cloudinary.uploader.upload(req.file.path);
-    fs.unlinkSync(req.file.path);
+  const uploadRes = await cloudinary.uploader.upload(req.file.path);
+  fs.unlinkSync(req.file.path);
 
-    const user = new User({
-      bodyImage: uploadRes.secure_url
-    });
+  const user = await User.create({ bodyImage: uploadRes.secure_url });
 
-    await user.save();
-
-    res.json({
-      message: "User created ✅",
-      userId: user._id
-    });
-
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  res.json({ userId: user._id });
 });
 
-// ADD UPPER
-app.post("/add-upper/:userId", upload.single("upperImage"), async (req, res) => {
-  try {
-    const user = await User.findById(req.params.userId);
+// ===== ADD UPPER =====
+app.post("/add-upper/:id", upload.single("upperImage"), async (req, res) => {
+  const user = await User.findById(req.params.id);
 
-    const uploadRes = await cloudinary.uploader.upload(req.file.path);
-    fs.unlinkSync(req.file.path);
+  const uploadRes = await cloudinary.uploader.upload(req.file.path);
+  fs.unlinkSync(req.file.path);
 
-    user.upperImage = uploadRes.secure_url;
-    await user.save();
+  user.upperImage = uploadRes.secure_url;
+  await user.save();
 
-    res.json({ message: "Upper added ✅" });
-
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  res.json({ message: "Upper added" });
 });
 
-// GENERATE OUTFIT
-app.post("/generate-outfit/:userId", async (req, res) => {
-  try {
-    const user = await User.findById(req.params.userId);
+// ===== GENERATE =====
+app.post("/generate-outfit/:id", async (req, res) => {
+  const user = await User.findById(req.params.id);
 
-    if (!user.bodyImage || !user.upperImage) {
-      return res.status(400).json({ error: "Images missing" });
-    }
-
-    let output;
-
-    const runModel = async () => {
-      return await replicate.run("stability-ai/sdxl", {
-        input: {
-          prompt: `A realistic fashion photo of the same person wearing the outfit. Person: ${user.bodyImage}. Outfit: ${user.upperImage}.`,
-          width: 768,
-          height: 1024
-        }
-      });
-    };
-
-    try {
-      output = await runModel();
-    } catch (err) {
-      if (err.message.includes("429")) {
-        console.log("Retrying after rate limit...");
-        await new Promise(r => setTimeout(r, 7000));
-        output = await runModel();
-      } else {
-        throw err;
+  const output = await replicate.run(
+    "stability-ai/sdxl:8beff3369e814221d7d3a9c7d8c3f276d6d9c1c0e9bafc7b6a9e5d9e6c4b2f22",
+    {
+      input: {
+        prompt: `A realistic fashion photo of a person wearing the outfit. Person: ${user.bodyImage}. Outfit: ${user.upperImage}.`,
+        width: 768,
+        height: 1024
       }
     }
+  );
 
-    const resultURL = output[0];
+  user.finalImage = output[0];
+  await user.save();
 
-    user.finalImage = resultURL;
-    await user.save();
-
-    res.json({
-      message: "Outfit generated ✅",
-      result: resultURL
-    });
-
-  } catch (err) {
-    console.error("GENERATE ERROR:", err);
-    res.status(500).json({ error: err.message });
-  }
+  res.json({ result: output[0] });
 });
 
-// GET RESULT
-app.get("/result/:userId", async (req, res) => {
-  const user = await User.findById(req.params.userId);
-
-  if (!user || !user.finalImage) {
-    return res.status(404).json({ error: "No result found" });
-  }
-
-  res.json({
-    result: user.finalImage
-  });
+// ===== RESULT =====
+app.get("/result/:id", async (req, res) => {
+  const user = await User.findById(req.params.id);
+  res.json({ result: user.finalImage });
 });
 
 // ===== START =====
