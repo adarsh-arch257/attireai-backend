@@ -4,7 +4,7 @@ import multer from "multer";
 import cors from "cors";
 import fs from "fs";
 import dotenv from "dotenv";
-import Replicate from "replicate";
+import fetch from "node-fetch";
 import { v2 as cloudinary } from "cloudinary";
 
 dotenv.config();
@@ -14,7 +14,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ===== ENV =====
 const PORT = process.env.PORT || 10000;
 
 // ===== CLOUDINARY =====
@@ -24,15 +23,10 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// ===== REPLICATE =====
-const replicate = new Replicate({
-  auth: process.env.REPLICATE_API_TOKEN,
-});
-
 // ===== MONGODB =====
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB Connected ✅"))
-  .catch((err) => console.log("MongoDB Error ❌", err));
+  .catch(err => console.log("MongoDB Error ❌", err));
 
 // ===== MULTER =====
 const upload = multer({ dest: "uploads/" });
@@ -51,7 +45,7 @@ app.get("/", (req, res) => {
 
 
 // =====================================================
-// 🔥 TRY-ON (FINAL WORKING MODEL)
+// 🔥 TRYON (FINAL — NO VERSION ERROR)
 // =====================================================
 app.post("/tryon", async (req, res) => {
   try {
@@ -61,34 +55,52 @@ app.post("/tryon", async (req, res) => {
       return res.status(400).json({ error: "Images required" });
     }
 
-    let output;
-
-    const runModel = async () => {
-      return await replicate.run(
-        "black-forest-labs/flux-schnell",
-        {
-          input: {
-            prompt: `A realistic fashion photo of a person wearing the outfit. Person: ${person_image}. Outfit: ${cloth_image}. Highly realistic, natural lighting.`
-          }
+    // STEP 1: Create prediction
+    const createRes = await fetch("https://api.replicate.com/v1/predictions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Token ${process.env.REPLICATE_API_TOKEN}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "black-forest-labs/flux-schnell", // ✅ no version
+        input: {
+          prompt: `A realistic fashion photo of a person wearing the outfit. Person: ${person_image}. Outfit: ${cloth_image}. High quality, realistic.`
         }
-      );
-    };
+      })
+    });
 
-    try {
-      output = await runModel();
-    } catch (err) {
-      if (err.message.includes("429")) {
-        console.log("Retrying after rate limit...");
-        await new Promise(r => setTimeout(r, 7000));
-        output = await runModel();
-      } else {
-        throw err;
-      }
+    const prediction = await createRes.json();
+
+    if (prediction.error) {
+      return res.status(400).json(prediction);
+    }
+
+    // STEP 2: Poll result
+    let status = prediction.status;
+    let result = null;
+
+    while (status !== "succeeded" && status !== "failed") {
+      await new Promise(r => setTimeout(r, 3000));
+
+      const checkRes = await fetch(prediction.urls.get, {
+        headers: {
+          "Authorization": `Token ${process.env.REPLICATE_API_TOKEN}`
+        }
+      });
+
+      const checkData = await checkRes.json();
+      status = checkData.status;
+      result = checkData.output;
+    }
+
+    if (status === "failed") {
+      return res.status(500).json({ error: "Generation failed" });
     }
 
     res.json({
       success: true,
-      result: output
+      result: result
     });
 
   } catch (err) {
@@ -138,19 +150,43 @@ app.post("/generate-outfit/:id", async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
 
-    let output = await replicate.run(
-      "black-forest-labs/flux-schnell",
-      {
+    const createRes = await fetch("https://api.replicate.com/v1/predictions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Token ${process.env.REPLICATE_API_TOKEN}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "black-forest-labs/flux-schnell",
         input: {
           prompt: `A realistic fashion photo of the same person wearing the outfit. Person: ${user.bodyImage}. Outfit: ${user.upperImage}.`
         }
-      }
-    );
+      })
+    });
 
-    user.finalImage = output[0];
+    const prediction = await createRes.json();
+
+    let status = prediction.status;
+    let result = null;
+
+    while (status !== "succeeded" && status !== "failed") {
+      await new Promise(r => setTimeout(r, 3000));
+
+      const checkRes = await fetch(prediction.urls.get, {
+        headers: {
+          "Authorization": `Token ${process.env.REPLICATE_API_TOKEN}`
+        }
+      });
+
+      const checkData = await checkRes.json();
+      status = checkData.status;
+      result = checkData.output;
+    }
+
+    user.finalImage = result[0];
     await user.save();
 
-    res.json({ result: output[0] });
+    res.json({ result: result[0] });
 
   } catch (err) {
     res.status(500).json({ error: err.message });
